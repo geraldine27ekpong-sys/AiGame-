@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Dash Ridge</title>
+<style>
+:root{--bg:#f3efe6;--ink:#1d2433;--sub:#5b6478;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#12161f;--ink:#eef0f6;--sub:#9aa3b8}}
+:root[data-theme="dark"]{--bg:#12161f;--ink:#eef0f6;--sub:#9aa3b8}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Trebuchet MS","Segoe UI",system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:12px;box-sizing:border-box;overflow:hidden}
+h1{margin:0;font-size:1.4rem;letter-spacing:.02em}
+p{margin:0;color:var(--sub);font-size:.9rem;text-align:center}
+canvas{width:100%;max-width:800px;aspect-ratio:16/9;border-radius:14px;touch-action:none;display:block;background:#8fd3f4}
+</style>
+</head>
+<body>
+<h1>Dash Ridge</h1>
+<canvas id="c" width="800" height="450" tabindex="0"></canvas>
+<p>Space / tap to jump · jump again in mid-air · hold for a higher jump</p>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d'),W=800,H=450;
+const G=1700,PW=26,PH=38,PX=200;
+let state='start',best=0,t=0;
+try{best=+localStorage.getItem('dashridge-best')||0}catch(e){}
+let p,plats,coins,spikes,cam,speed,coinsGot,dist,flash;
+
+function rnd(a,b){return a+Math.random()*(b-a)}
+function reset(){
+  p={y:300-PH,vy:0,jumps:1,coyote:0,grounded:true,run:0};
+  plats=[{x:-100,y:340,w:700}];coins=[];spikes=[];
+  cam=0;speed=320;coinsGot=0;dist=0;flash=0;
+  gen();
+}
+function gen(){
+  let last=plats[plats.length-1];
+  while(last.x+last.w<cam+W+500){
+    const up=rnd(-70,60);
+    const y=Math.max(230,Math.min(390,last.y+up));
+    const gap=rnd(70,70+Math.min(130,speed*.3))-(y<last.y?25:0);
+    const w=rnd(170,170+260);
+    const x=last.x+last.w+gap;
+    const pl={x,y,w};plats.push(pl);
+    if(w>230&&dist>150&&Math.random()<.4)spikes.push({x:x+rnd(70,w-90),y});
+    if(Math.random()<.75){const n=3+(Math.random()*3|0);for(let i=0;i<n;i++)coins.push({x:x+40+i*34,y:y-60-Math.sin(i/(n-1)*Math.PI)*30,got:false})}
+    last=pl;
+  }
+  plats=plats.filter(q=>q.x+q.w>cam-100);
+  spikes=spikes.filter(s=>s.x>cam-100);
+  coins=coins.filter(c=>c.x>cam-100&&!c.got);
+}
+function jump(){
+  if(state!=='play'){if(state==='over'&&t<.4)return;reset();state='play';return}
+  if(p.coyote>0){p.vy=-640;p.coyote=0;p.jumps=1;p.grounded=false}
+  else if(p.jumps>0){p.vy=-570;p.jumps--;}
+}
+function release(){if(state==='play'&&p.vy<-220)p.vy*=.55}
+function die(){
+  state='over';t=0;
+  const s=score();if(s>best){best=s;try{localStorage.setItem('dashridge-best',best)}catch(e){}}
+}
+const score=()=>Math.floor(dist/10)+coinsGot*10;
+
+addEventListener('keydown',e=>{
+  if(['Space','ArrowUp','KeyW'].includes(e.code)){e.preventDefault();if(!e.repeat)jump()}
+});
+addEventListener('keyup',e=>{if(['Space','ArrowUp','KeyW'].includes(e.code))release()});
+cv.addEventListener('pointerdown',e=>{e.preventDefault();jump()});
+addEventListener('pointerup',release);
+
+function update(dt){
+  t+=dt;
+  if(state!=='play')return;
+  speed=Math.min(640,320+dist*.02);
+  const prevFeet=p.y+PH;
+  p.vy+=G*dt;p.y+=p.vy*dt;
+  cam+=speed*dt;dist=cam;
+  const px=cam+PX,l=px-PW/2,r=px+PW/2;
+  let landed=false;
+  for(const q of plats){
+    if(r>q.x&&l<q.x+q.w){
+      if(p.vy>=0&&prevFeet<=q.y+4&&p.y+PH>=q.y){p.y=q.y-PH;p.vy=0;landed=true}
+      else if(p.y+PH>q.y+10){die();flash=1;return}
+    }
+  }
+  if(landed){p.grounded=true;p.coyote=.1;p.jumps=1;p.run+=dt*speed/30}
+  else{p.grounded=false;p.coyote-=dt}
+  for(const s of spikes){
+    if(r-5>s.x&&l+5<s.x+26&&p.y+PH>s.y-18){die();flash=1;return}
+  }
+  for(const c of coins){
+    if(!c.got&&Math.abs(c.x-px)<24&&Math.abs(c.y-(p.y+PH/2))<30){c.got=true;coinsGot++}
+  }
+  if(p.y>H+60){die();return}
+  gen();
+}
+
+function hills(off,col,base,amp,len){
+  ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(0,H);
+  for(let x=0;x<=W;x+=20)ctx.lineTo(x,base-Math.abs(Math.sin((x+cam*off)/len))*amp);
+  ctx.lineTo(W,H);ctx.fill();
+}
+function draw(){
+  const g=ctx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#ffb88c');g.addColorStop(.6,'#ffe3b3');g.addColorStop(1,'#fff3d6');
+  ctx.fillStyle=g;ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#ff7a59';ctx.beginPath();ctx.arc(620,120,48,0,7);ctx.fill();
+  hills(.08,'#e9a38a',330,110,130);
+  hills(.18,'#c76f6f',380,80,90);
+  for(const q of plats){
+    const x=q.x-cam;
+    ctx.fillStyle='#4b2e4f';ctx.fillRect(x,q.y,q.w,H-q.y);
+    ctx.fillStyle='#3fae7a';ctx.fillRect(x,q.y,q.w,9);
+    ctx.fillStyle='#5c3a60';
+    for(let i=20;i<q.w-10;i+=46)ctx.fillRect(x+i,q.y+26,22,6);
+  }
+  ctx.fillStyle='#f2f2f7';
+  for(const s of spikes){
+    const x=s.x-cam;ctx.beginPath();ctx.moveTo(x,s.y);ctx.lineTo(x+13,s.y-22);ctx.lineTo(x+26,s.y);ctx.fill();
+  }
+  for(const c of coins){
+    const x=c.x-cam,w=Math.abs(Math.cos(t*4+c.x*.05))*7+2;
+    ctx.fillStyle='#ffc933';ctx.beginPath();ctx.ellipse(x,c.y,w,9,0,0,7);ctx.fill();
+  }
+  // player
+  const x=PX-PW/2,y=p.y;
+  const sw=p.grounded&&state==='play'?Math.sin(p.run)*9:5;
+  ctx.fillStyle='#1d2433';
+  ctx.fillRect(x+4,y+PH-12,7,12+(sw>0?-sw/3:0));
+  ctx.fillRect(x+PW-11,y+PH-12,7,12+(sw<0?sw/3:0));
+  ctx.fillStyle='#2f6bff';ctx.beginPath();ctx.roundRect(x,y,PW,PH-8,8);ctx.fill();
+  ctx.fillStyle='#fff';ctx.fillRect(x+PW-10,y+8,8,8);
+  ctx.fillStyle='#1d2433';ctx.fillRect(x+PW-6,y+10,4,4);
+  ctx.fillStyle='#ff5a5a';ctx.fillRect(x-8,y+10,10,5);
+  // HUD
+  ctx.fillStyle='rgba(29,36,51,.85)';ctx.font='bold 22px Trebuchet MS,sans-serif';ctx.textAlign='left';
+  ctx.fillText(score()+' pts',18,32);
+  ctx.font='14px Trebuchet MS,sans-serif';ctx.fillText('Best '+best+'  ·  Coins '+coinsGot,18,54);
+  if(state!=='play'){
+    ctx.fillStyle='rgba(18,22,31,.62)';ctx.fillRect(0,0,W,H);
+    ctx.fillStyle='#fff';ctx.textAlign='center';
+    ctx.font='bold 48px Trebuchet MS,sans-serif';
+    ctx.fillText(state==='start'?'Dash Ridge':'Wiped out',W/2,H/2-20);
+    ctx.font='20px Trebuchet MS,sans-serif';
+    if(state==='over')ctx.fillText(score()+' pts'+(score()>=best&&score()>0?' · new best!':''),W/2,H/2+16);
+    ctx.fillText(state==='start'?'Tap or press Space to run':'Tap or press Space to run again',W/2,H/2+52);
+  }
+}
+let last=performance.now();
+function loop(n){
+  const dt=Math.min(.033,(n-last)/1000);last=n;
+  update(dt);draw();requestAnimationFrame(loop);
+}
+reset();requestAnimationFrame(loop);
+</script>
+</body>
+</html>
